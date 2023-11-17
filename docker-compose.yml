@@ -1,0 +1,97 @@
+version: '3.9'
+
+volumes:
+  minio-data:
+    driver: local
+
+services:
+  zookeeper:
+    image: wurstmeister/zookeeper
+    container_name: zookeeper_compose
+    ports:
+      - '2181:2181'
+    expose:
+      - '2181'
+    environment:
+      ALLOW_ANONYMOUS_LOGIN: 'yes'
+
+  kafka:
+    image: wurstmeister/kafka
+    container_name: kafka_compose
+    ports:
+      - '9092:9092'
+    environment:
+      ALLOW_PLAINTEXT_LISTENER: 'yes'
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+      KAFKA_ADVERTISED_LISTENERS: OUTSIDE://127.0.0.1:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: OUTSIDE:PLAINTEXT
+      KAFKA_LISTENERS: OUTSIDE://0.0.0.0:9092
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_INTER_BROKER_LISTENER_NAME: OUTSIDE
+      KAFKA_SASL_ENABLED_MECHANISMS: PLAIN
+      KAFKA_SASL_MECHANISM_INTER_BROKER_PROTOCOL: PLAIN
+    depends_on:
+      - zookeeper
+    volumes:
+      - ./:/etc/kafka
+
+  db:
+    image: postgres:14.7-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./server/src/main/resources/db/create_db.sql:/docker-entrypoint-initdb.d/create_db.sql
+      - ./db/shortcut/data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  minio:
+    image: quay.io/minio/minio
+    container_name: minio
+    environment:
+      - MINIO_ROOT_USER=ROOTUSER
+      - MINIO_ROOT_PASSWORD=CHANGEME123
+    ports:
+      - '9090:9090'
+      - '9000:9000'
+    volumes:
+      - ${HOME}/minio/data:/data
+    command: server /data --console-address ":9090"
+
+  server:
+      build:
+        context: ./server
+        dockerfile: Dockerfile
+      ports:
+        - "8888:8888"
+      environment:
+        - SERVER_PORT= 8888
+        - SPRING_DATASOURCE_URL=jdbc:postgresql://db/students
+      container_name: server
+      depends_on:
+        - db
+        - zookeeper
+        - kafka
+
+  client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    container_name: client
+    depends_on:
+      - db
+      - zookeeper
+      - kafka
+      - server
+
+
+# commands to run
+# docker-compose up -d -- run (-d start flag in background);
+# docker-compose down -- stop
+# docker-compose ps -- show running processes
+#  http://localhost:8080/getAllUnits
+#  http://localhost:8080/getOneUnit/1
